@@ -120,8 +120,10 @@ def crawl_detail_page(url: str):
             pass
         data[label] = value
 
-    save_data(conn, data)
     print(data)
+
+    save_data(conn, data)
+
 
 
 if __name__ == '__main__':
