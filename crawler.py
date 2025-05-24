@@ -15,7 +15,7 @@ load_dotenv()
 conn = connect_db()
 
 driver = uc.Chrome(headless=False)
-wait = WebDriverWait(driver, 10)
+wait = WebDriverWait(driver, 1)
 DOMAIN = os.getenv("DOMAIN")
 
 
@@ -52,13 +52,12 @@ def crawl_main_page(page_num: int = 1):
             continue
 
         print("Sleeping...")
+        time.sleep(random.uniform(5, 15))
         if i % 5 == 0:
-            time.sleep(random.uniform(10, 15))
-        else:
-            time.sleep(random.uniform(5, 7))
+            time.sleep(5)
         if num_fails == 1:
             time.sleep(100)
-        elif num_fails == 2:
+        elif num_fails == 5:
             sys.exit(1)
 
         try:
@@ -75,10 +74,10 @@ def crawl_detail_page(url: str):
 
     data = {"url": url}
 
+    print(f"Crawling info...")
     span_brand = driver.find_element(By.XPATH, "//a[contains(@href, 'occasion-voiture-marque')]/span")
     data["Marque"] = span_brand.text.replace("occasion", "")
 
-    print(f"Crawling title...")
     span_title = wait.until(EC.presence_of_element_located(
         (By.XPATH, "//span[contains(@class, 'CardContainer_CardContainer_title')]")
     ))
@@ -95,11 +94,13 @@ def crawl_detail_page(url: str):
         pass
 
     print(f"Waiting button...")
-    time.sleep(random.uniform(5, 7))
-    button = driver.find_element(By.XPATH, "//button[contains(@data-tracking-click-id, 'voirTout')]")
+    button = wait.until(
+        EC.element_to_be_clickable((By.XPATH, "//button[contains(@data-tracking-click-id, 'voirTout')]"))
+    )
     button.click()
-    print("Button clicked.")
+    time.sleep(random.uniform(5, 15))
 
+    print("Waiting div...")
     div = wait.until(EC.presence_of_element_located(
         (By.XPATH, "//div[contains(@class, 'ReactModal__Content')]")
     ))
@@ -130,4 +131,4 @@ if __name__ == '__main__':
 
     for i in range(begin, 300):
         crawl_main_page(page_num=i)
-        time.sleep(random.uniform(5, 7))
+        time.sleep(random.uniform(5, 15))
