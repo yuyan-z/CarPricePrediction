@@ -15,7 +15,7 @@ load_dotenv()
 conn = connect_db()
 
 driver = uc.Chrome(headless=False)
-wait = WebDriverWait(driver, 5)
+wait = WebDriverWait(driver, 10)
 DOMAIN = os.getenv("DOMAIN")
 
 
@@ -76,7 +76,7 @@ def crawl_detail_page(url: str):
     data = {"url": url}
 
     span_brand = driver.find_element(By.XPATH, "//a[contains(@href, 'occasion-voiture-marque')]/span")
-    data["Marque"] = span_brand.text
+    data["Marque"] = span_brand.text.replace("occasion", "")
 
     print(f"Crawling title...")
     span_title = wait.until(EC.presence_of_element_located(
