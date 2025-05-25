@@ -54,7 +54,7 @@ def crawl_main_page(page_num: int = 1):
         print("Sleeping...")
         time.sleep(random.uniform(7, 15))
         if i % 5 == 0:
-            time.sleep(5)
+            time.sleep(random.uniform(7, 15))
         if num_fails == 1:
             time.sleep(100)
         elif num_fails == 5:
@@ -76,7 +76,7 @@ def crawl_detail_page(url: str):
 
     print(f"Crawling info...")
     span_brand = driver.find_element(By.XPATH, "//a[contains(@href, 'occasion-voiture-marque')]/span")
-    data["Marque"] = span_brand.text.replace("occasion", "").strip
+    data["Marque"] = span_brand.text.replace("occasion", "").strip()
 
     span_title = wait.until(EC.presence_of_element_located(
         (By.XPATH, "//span[contains(@class, 'CardContainer_CardContainer_title')]")
@@ -97,8 +97,8 @@ def crawl_detail_page(url: str):
     button = wait.until(
         EC.element_to_be_clickable((By.XPATH, "//button[contains(@data-tracking-click-id, 'voirTout')]"))
     )
-    button.click()
     time.sleep(random.uniform(7, 15))
+    button.click()
 
     print("Waiting div...")
     div = wait.until(EC.presence_of_element_located(

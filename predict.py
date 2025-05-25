@@ -5,7 +5,7 @@ from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 
 from rare_encoder import RareEncoder
 
-te_cols = ['model', 'post_code']
+te_cols = ['model', 'postcode']
 
 
 def load_models():
@@ -43,8 +43,6 @@ def predict(X_test: pd.DataFrame) -> pd.DataFrame:
 
 
 if __name__ == "__main__":
-    import pandas as pd
-
     data = {
         "model": [
             "renault espace vi phase 2",
@@ -52,8 +50,8 @@ if __name__ == "__main__":
             "skoda octavia iv combi phase 2"
         ],
         "price": [38399, 9990, 39479],
-        "post_code": ["61", "47", "59"],
-        "prod_year": [2024, 2022, 2024],
+        "postcode": ["61", "47", "59"],
+        "production_year": [2024, 2022, 2024],
         "mileage": [25660, 30192, 14964],
         "gearbox": [1, 1, 1],
         "energy": [
@@ -61,15 +59,15 @@ if __name__ == "__main__":
             "electrique",
             "diesel"
         ],
-        "Couleur": ["blanc", "blanc", "bleu"],
-        "Première main": [1, 1, 1],
-        "Nombre de places": [7, 4, 5],
-        "Contrôle technique": [0, 0, 0],
-        "Norme euro": [6, 6, 6],
-        "Puissance DIN": [199, 82, 150],
-        "Nombre de portes": [5, 5, 5],
-        "Longueur": [4.72, 3.60, 4.70],
-        "Emission de CO2": [108, 0, 126]
+        "color": ["blanc", "blanc", "bleu"],
+        "first_hand": [1, 1, 1],
+        "num_places": [7, 4, 5],
+        "control_technique": [0, 0, 0],
+        "norm_euro": [6, 6, 6],
+        "power_DIN": [199, 82, 150],
+        "num_doors": [5, 5, 5],
+        "length": [4.72, 3.60, 4.70],
+        "emission_CO2": [108, 0, 126]
     }
 
     df_test = pd.DataFrame(data)
@@ -87,3 +85,27 @@ if __name__ == "__main__":
     print(df_result)
 
     evaluate(y_test, y_test_pred)
+
+    # import requests
+    #
+    # url = "http://127.0.0.1:8000/predict"
+    # data = {
+    #     "model": "renault espace vi phase 2",
+    #     "postcode": "61",
+    #     "production_year": 2024,
+    #     "mileage": 25660,
+    #     "gearbox": 1,
+    #     "energy": "hybride essence électrique",
+    #     "color": "blanc",
+    #     "first_hand": 1,
+    #     "num_places": 7,
+    #     "control_technique": 0,
+    #     "norm_euro": 6,
+    #     "power_DIN": 199,
+    #     "num_doors": 5,
+    #     "length": 4.72,
+    #     "emission_CO2": 108
+    # }
+    #
+    # resp = requests.post(url, json=data)
+    # print(resp.json())

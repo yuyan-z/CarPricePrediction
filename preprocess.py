@@ -25,28 +25,28 @@ def format_df(df_raw: pd.DataFrame) -> pd.DataFrame:
     df = df_raw.copy()
 
     numstr_cols = [
-        "price", "mileage", "Norme euro", "Puissance DIN", "Longueur",
-        "Emission de CO2",
+        "price", "mileage", "norm_euro", "power_DIN", "length",
+        "emission_CO2",
     ]
     for col in numstr_cols:
         df[col] = df[col].apply(clean_numstr)
 
     int_cols = [
-        "price", "prod_year", "mileage", "Nombre de places", "Norme euro",
-        "Puissance DIN", "Nombre de portes", "Emission de CO2"
+        "price", "production_year", "mileage", "num_places", "norm_euro",
+        "power_DIN", "num_doors", "emission_CO2"
     ]
     for col in int_cols:
         df[col] = df[col].astype(int)
 
-    df["Longueur"] = df["Longueur"].astype(float)
+    df["length"] = df["length"].astype(float)
 
-    df["post_code"] = np.where(
-        df["post_code"] == "",
+    df["postcode"] = np.where(
+        df["postcode"] == "",
         "unknown",
-        df["post_code"].str[:2]
+        df["postcode"].str[:2]
     )
 
-    df["Couleur"] = df["Couleur"].str.split().str[0]  # Use the first word
+    df["color"] = df["color"].str.split().str[0]  # Use the first word
 
     cols = df.select_dtypes(include=['object']).columns.tolist()
     for col in cols:
@@ -54,8 +54,8 @@ def format_df(df_raw: pd.DataFrame) -> pd.DataFrame:
 
     # Binary cols
     df["gearbox"] = df["gearbox"].map({"automatique": 1, "manuelle": 0})
-    df["Première main"] = df["Première main"].map({"oui": 1, "non": 0})
-    df["Contrôle technique"] = df["Contrôle technique"].map({"requis": 1, "non requis": 0})
+    df["first_hand"] = df["first_hand"].map({"oui": 1, "non": 0})
+    df["control_technique"] = df["control_technique"].map({"requis": 1, "non requis": 0})
 
     return df
 

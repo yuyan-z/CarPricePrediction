@@ -30,8 +30,8 @@ def save_data(conn: connection, data: dict):
     brand = data.get("Marque")
     model = data.get("Titre")
     price = data.get("Prix")
-    post_code = data.get("Code Postal")
-    prod_year = data.get("Année")
+    postcode = data.get("Code Postal")
+    production_year = data.get("Année")
     mileage = data.get("Kilométrage")
     gearbox = data.get("Boîte de vitesse")
     energy = data.get("Énergie")
@@ -44,12 +44,12 @@ def save_data(conn: connection, data: dict):
     cursor = conn.cursor()
     cursor.execute('''
         INSERT INTO cars (
-            url, brand, model, price, post_code, prod_year,
+            url, brand, model, price, postcode, production_year,
             mileage, gearbox, energy, attrs, crawled_at
         ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
         ON CONFLICT (url) DO NOTHING
     ''', (
-        url, brand, model, price, post_code, prod_year,
+        url, brand, model, price, postcode, production_year,
         mileage, gearbox, energy, json.dumps(attrs)
     ))
     conn.commit()
