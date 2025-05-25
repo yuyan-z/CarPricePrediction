@@ -49,6 +49,8 @@ def format_df(df_raw: pd.DataFrame) -> pd.DataFrame:
         df["post_code"].str[:2]
     )
 
+    df["Couleur"] = df["Couleur"].str.lower()
+
     return df
 
 
