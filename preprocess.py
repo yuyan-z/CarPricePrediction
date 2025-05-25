@@ -21,20 +21,30 @@ def clean_numstr(s: str) -> str:
     return s
 
 
-def format_df(df_raw: pd.DataFrame) -> pd.DataFrame:
+def format_num_df(df_raw: pd.DataFrame) -> pd.DataFrame:
     df = df_raw.copy()
 
-    for col in ["price", "Longueur", "mileage", "Puissance DIN", "Emission de CO2", "Puissance fiscale"]:
+    numstr_cols = [
+        "price", "Longueur", "mileage", "Puissance DIN", "Emission de CO2",
+        "Puissance fiscale"
+    ]
+    for col in numstr_cols:
         df[col] = df[col].apply(clean_numstr)
 
-    for col in ["price", "prod_year", "mileage", "Puissance DIN", "Emission de CO2", "Puissance fiscale", "Nombre de places",
-                "Nombre de portes"]:
+    int_cols = [
+        "price", "prod_year", "mileage", "Puissance DIN", "Emission de CO2",
+        "Puissance fiscale", "Nombre de places", "Nombre de portes"
+    ]
+    for col in int_cols:
         df[col] = df[col].astype(int)
+
     df["Longueur"] = df["Longueur"].astype(float)
 
-    df["Mise en circulation"] = pd.to_datetime(df["Mise en circulation"], format="%d/%m/%Y")
-    df["circulation_year"] = df["Mise en circulation"].dt.year
-    df.drop(columns=["Mise en circulation"], inplace=True)
+    return df
+
+
+def format_str_df(df_raw: pd.DataFrame) -> pd.DataFrame:
+    df = df_raw.copy()
 
     df["post_code"] = np.where(
         df["post_code"] == "",
@@ -66,26 +76,25 @@ def analyze_df(df: pd.DataFrame):
     print(df.describe())
 
 
-def rare_encode(df: pd.DataFrame, col: str, top_k=5, rare_label="Other"):
+def rare_encode(df: pd.DataFrame, col: str, top_k=5, rare_label="Other") -> pd.DataFrame:
     top_categories = df[col].value_counts().nlargest(top_k).index
     df[col] = df[col].apply(lambda x: x if x in top_categories else rare_label)
     df = df.drop(columns=[col])
     return df
 
 
-def transform_df(df_raw: pd.DataFrame):
-    # Drop unwanted cols
-    unwanted_cols = ["circulation_year", "Puissance fiscale", "brand", "Provenance"]
-    df = df_raw.drop(columns=unwanted_cols)
+def transform_df(df_raw: pd.DataFrame) -> pd.DataFrame:
+    df = df_raw.copy()
 
     # Log transform price
     df["price"] = np.log1p(df["price"])
 
     # Binary cols
-    df["gearbox"] = df["gearbox"].map({"Automatique": 1, "Manuelle": 0})
-    df["Première main"] = df["Première main"].map({"Oui": 1, "Non": 0})
-    df["Contrôle technique"] = df["Contrôle technique"].map({"Requis": 1, "Non requis": 0})
+    df["gearbox"] = df["gearbox"].map({"automatique": 1, "manuelle": 0})
+    df["Première main"] = df["Première main"].map({"oui": 1, "non": 0})
+    df["Contrôle technique"] = df["Contrôle technique"].map({"requis": 1, "non requis": 0})
 
+    # String cols
     df["Norme euro"] = df["Norme euro"].str[-1].astype(int)
     df["Couleur"] = df["Couleur"].str.split().str[0]
 
@@ -94,5 +103,3 @@ def transform_df(df_raw: pd.DataFrame):
         rare_encode(df, col)
 
     return df
-
-
