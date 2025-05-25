@@ -1,0 +1,13 @@
+pandas~=2.2.3
+numpy~=2.2.4
+fastapi~=0.115.11
+pydantic~=2.10.6
+joblib~=1.4.2
+scikit-learn~=1.6.1
+matplotlib~=3.10.0
+seaborn~=0.13.2
+undetected-chromedriver~=3.5.5
+python-dotenv~=1.0.1
+selenium~=4.32.0
+psycopg2-binary~=2.9.10
+sqlalchemy~=2.0.40
