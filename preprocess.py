@@ -21,30 +21,24 @@ def clean_numstr(s: str) -> str:
     return s
 
 
-def format_num_df(df_raw: pd.DataFrame) -> pd.DataFrame:
+def format_df(df_raw: pd.DataFrame) -> pd.DataFrame:
     df = df_raw.copy()
 
     numstr_cols = [
-        "price", "Longueur", "mileage", "Puissance DIN", "Emission de CO2",
-        "Puissance fiscale"
+        "price", "mileage", "Norme euro", "Puissance DIN", "Longueur",
+        "Emission de CO2",
     ]
     for col in numstr_cols:
         df[col] = df[col].apply(clean_numstr)
 
     int_cols = [
-        "price", "prod_year", "mileage", "Puissance DIN", "Emission de CO2",
-        "Puissance fiscale", "Nombre de places", "Nombre de portes"
+        "price", "prod_year", "mileage", "Nombre de places", "Norme euro",
+        "Puissance DIN", "Nombre de portes", "Emission de CO2"
     ]
     for col in int_cols:
         df[col] = df[col].astype(int)
 
     df["Longueur"] = df["Longueur"].astype(float)
-
-    return df
-
-
-def format_str_df(df_raw: pd.DataFrame) -> pd.DataFrame:
-    df = df_raw.copy()
 
     df["post_code"] = np.where(
         df["post_code"] == "",
@@ -52,9 +46,16 @@ def format_str_df(df_raw: pd.DataFrame) -> pd.DataFrame:
         df["post_code"].str[:2]
     )
 
+    df["Couleur"] = df["Couleur"].str.split().str[0]  # Use the first word
+
     cols = df.select_dtypes(include=['object']).columns.tolist()
     for col in cols:
-        df[col] = df[col].str.lower()
+        df[col] = df[col].str.lower().str.strip()
+
+    # Binary cols
+    df["gearbox"] = df["gearbox"].map({"automatique": 1, "manuelle": 0})
+    df["Première main"] = df["Première main"].map({"oui": 1, "non": 0})
+    df["Contrôle technique"] = df["Contrôle technique"].map({"requis": 1, "non requis": 0})
 
     return df
 
@@ -75,31 +76,3 @@ def analyze_df(df: pd.DataFrame):
     print("\n-- description --\n")
     print(df.describe())
 
-
-def rare_encode(df: pd.DataFrame, col: str, top_k=5, rare_label="Other") -> pd.DataFrame:
-    top_categories = df[col].value_counts().nlargest(top_k).index
-    df[col] = df[col].apply(lambda x: x if x in top_categories else rare_label)
-    df = df.drop(columns=[col])
-    return df
-
-
-def transform_df(df_raw: pd.DataFrame) -> pd.DataFrame:
-    df = df_raw.copy()
-
-    # Log transform price
-    df["price"] = np.log1p(df["price"])
-
-    # Binary cols
-    df["gearbox"] = df["gearbox"].map({"automatique": 1, "manuelle": 0})
-    df["Première main"] = df["Première main"].map({"oui": 1, "non": 0})
-    df["Contrôle technique"] = df["Contrôle technique"].map({"requis": 1, "non requis": 0})
-
-    # String cols
-    df["Norme euro"] = df["Norme euro"].str[-1].astype(int)
-    df["Couleur"] = df["Couleur"].str.split().str[0]
-
-    # Rare Encoding
-    for col in ["energy", "Couleur"]:
-        rare_encode(df, col)
-
-    return df
