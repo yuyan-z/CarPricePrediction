@@ -1,0 +1,206 @@
+import numpy as np
+import pandas as pd
+import torch
+from torch import nn
+from torch.utils.data import Dataset, DataLoader
+
+# ======================
+# 1. 配置参数
+# ======================
+CSV_PATH = "data.csv"
+VALUE_COL = "value"      # 目标列名
+
+SEQ_LEN = 12             # 用过去多少个周作为输入（比如 12 周）
+PRED_LEN = 4             # 一次预测未来多少个周（比如 4 周）
+
+TRAIN_RATIO = 0.8        # 按时间切分 train/test
+BATCH_SIZE = 32
+NUM_EPOCHS = 50
+LR = 1e-3
+HIDDEN_SIZE = 64
+NUM_LAYERS = 1
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print("Using device:", device)
+
+# ======================
+# 2. 读取 & 预处理数据
+# ======================
+df = pd.read_csv(CSV_PATH)
+
+# 确保按时间排序（如果有 date 列）
+if "date" in df.columns:
+    df["date"] = pd.to_datetime(df["date"])
+    df = df.sort_values("date")
+
+# 取出目标序列，转为 float32 的 numpy 数组
+series = df[VALUE_COL].values.astype(np.float32)
+
+# 简单标准化：减均值除以标准差
+mean = series.mean()
+std = series.std() if series.std() > 0 else 1.0
+series_norm = (series - mean) / std
+
+
+# ======================
+# 3. 构造监督学习样本:
+#    用前 SEQ_LEN 周预测接下来 PRED_LEN 周
+# ======================
+def create_sequences_multi_step(data: np.ndarray, seq_len: int, pred_len: int):
+    """
+    data: 形状 (T,)
+    返回:
+        X: (num_samples, seq_len, 1)
+        y: (num_samples, pred_len)   # 一次预测未来 pred_len 个点
+    """
+    xs, ys = [], []
+    # 注意这里要保证后面还能取到 pred_len 个点
+    for i in range(len(data) - seq_len - pred_len + 1):
+        x = data[i : i + seq_len]                     # 输入窗口
+        y = data[i + seq_len : i + seq_len + pred_len]  # 未来 pred_len 个点
+        xs.append(x)
+        ys.append(y)
+    X = np.array(xs)  # (N, seq_len)
+    y = np.array(ys)  # (N, pred_len)
+    # 增加 feature 维度 -> (N, seq_len, 1)
+    X = X[..., np.newaxis]
+    return X.astype(np.float32), y.astype(np.float32)
+
+
+X, y = create_sequences_multi_step(series_norm, SEQ_LEN, PRED_LEN)
+print("X shape:", X.shape)  # (N, seq_len, 1)
+print("y shape:", y.shape)  # (N, pred_len)
+
+# 按时间切分 train / test（前 80% train，后 20% test）
+num_samples = X.shape[0]
+train_size = int(num_samples * TRAIN_RATIO)
+
+X_train = X[:train_size]
+y_train = y[:train_size]
+X_test = X[train_size:]
+y_test = y[train_size:]
+
+
+# ======================
+# 4. 定义 PyTorch Dataset
+# ======================
+class TimeSeriesDataset(Dataset):
+    def __init__(self, X: np.ndarray, y: np.ndarray):
+        self.X = torch.from_numpy(X)  # (N, seq_len, 1)
+        self.y = torch.from_numpy(y)  # (N, pred_len)
+
+    def __len__(self):
+        return len(self.X)
+
+    def __getitem__(self, idx):
+        # 返回 (seq_len, 1) 和 (pred_len,)
+        return self.X[idx], self.y[idx]
+
+
+train_dataset = TimeSeriesDataset(X_train, y_train)
+test_dataset = TimeSeriesDataset(X_test, y_test)
+
+train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
+test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE, shuffle=False)
+
+
+# ======================
+# 5. 定义 LSTM 模型（多步输出）
+# ======================
+class LSTMModel(nn.Module):
+    def __init__(self, input_size=1, hidden_size=64, num_layers=1, output_size=1):
+        super().__init__()
+        self.hidden_size = hidden_size
+        self.num_layers = num_layers
+
+        self.lstm = nn.LSTM(
+            input_size=input_size,
+            hidden_size=hidden_size,
+            num_layers=num_layers,
+            batch_first=True,   # 输入 (batch, seq_len, input_size)
+        )
+        self.fc = nn.Linear(hidden_size, output_size)
+
+    def forward(self, x):
+        # x: (batch, seq_len, input_size)
+        batch_size = x.size(0)
+
+        # 初始化 hidden state & cell state
+        h0 = torch.zeros(self.num_layers, batch_size, self.hidden_size).to(x.device)
+        c0 = torch.zeros(self.num_layers, batch_size, self.hidden_size).to(x.device)
+
+        # out: (batch, seq_len, hidden_size)
+        out, _ = self.lstm(x, (h0, c0))
+
+        # 只取最后一个时间步的输出
+        last_out = out[:, -1, :]        # (batch, hidden_size)
+
+        # 映射到输出维度 (pred_len)
+        y_hat = self.fc(last_out)       # (batch, output_size)
+        return y_hat
+
+
+model = LSTMModel(
+    input_size=1,
+    hidden_size=HIDDEN_SIZE,
+    num_layers=NUM_LAYERS,
+    output_size=PRED_LEN,   # ⭐ 多步预测：输出维度 = PRED_LEN
+).to(device)
+
+criterion = nn.MSELoss()
+optimizer = torch.optim.Adam(model.parameters(), lr=LR)
+
+
+# ======================
+# 6. 训练循环
+# ======================
+for epoch in range(1, NUM_EPOCHS + 1):
+    model.train()
+    train_losses = []
+
+    for batch_x, batch_y in train_loader:
+        batch_x = batch_x.to(device)  # (B, seq_len, 1)
+        batch_y = batch_y.to(device)  # (B, pred_len)
+
+        optimizer.zero_grad()
+        outputs = model(batch_x)      # (B, pred_len)
+
+        loss = criterion(outputs, batch_y)
+        loss.backward()
+        optimizer.step()
+
+        train_losses.append(loss.item())
+
+    # 每轮结束后在 test 集上评估一下
+    model.eval()
+    test_losses = []
+    with torch.no_grad():
+        for batch_x, batch_y in test_loader:
+            batch_x = batch_x.to(device)
+            batch_y = batch_y.to(device)
+            outputs = model(batch_x)   # (B, pred_len)
+            loss = criterion(outputs, batch_y)
+            test_losses.append(loss.item())
+
+    print(
+        f"Epoch [{epoch}/{NUM_EPOCHS}] "
+        f"Train Loss: {np.mean(train_losses):.4f} "
+        f"Test Loss: {np.mean(test_losses):.4f}"
+    )
+
+
+# ======================
+# 7. 做一次多步预测看看（可选）
+# ======================
+model.eval()
+with torch.no_grad():
+    # 取最后一个 test 样本
+    sample_x = torch.from_numpy(X_test[-1:]).to(device)  # shape (1, seq_len, 1)
+    pred_norm = model(sample_x).cpu().numpy()[0]         # 形状: (PRED_LEN,)
+
+    # 反标准化
+    pred_values = pred_norm * std + mean
+    true_values = y_test[-1] * std + mean               # 真实未来 PRED_LEN 周
+
+    print("True future values:", true_values)
+    print("Pred future values:", pred_values)
