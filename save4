@@ -1,0 +1,30 @@
+def plot_distribution(x, bins=50):
+    x = np.array(x)
+
+    plt.figure(figsize=(15, 10))
+
+    # Histogram
+    plt.subplot(2, 2, 1)
+    plt.hist(x, bins=bins)
+    plt.title("Histogram")
+
+    # Log Histogram
+    plt.subplot(2, 2, 2)
+    x_pos = x[x > 0]
+    plt.hist(np.log1p(x_pos), bins=bins)
+    plt.title("Log Histogram")
+
+    # KDE
+    plt.subplot(2, 2, 3)
+    kde = gaussian_kde(x)
+    xs = np.linspace(min(x), max(x), 300)
+    plt.plot(xs, kde(xs))
+    plt.title("KDE")
+
+    # QQ Plot
+    plt.subplot(2, 2, 4)
+    stats.probplot(x, dist="norm", plot=plt)
+    plt.title("QQ Plot")
+
+    plt.tight_layout()
+    plt.show()
