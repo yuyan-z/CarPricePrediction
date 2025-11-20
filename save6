@@ -1,0 +1,313 @@
+import torch
+import torch.nn as nn
+from torch.utils.data import Dataset, DataLoader
+import numpy as np
+
+
+# ===============================
+# 1. 通用 Dataset：三种任务模式
+# ===============================
+class MultiStepDataset(Dataset):
+    """
+    通用滑窗 Dataset：
+    支持三种模式：
+    1) single_step:       x_{t-p+1:t}   -> a_{t+1}
+    2) multi_step_target: x_{t-p+1:t}   -> a_{t+1 : t+h}
+    3) multi_step_full:   x_{t-p+1:t}   -> x_{t+1 : t+h}
+    """
+
+    def __init__(
+        self,
+        data,
+        input_window: int,
+        output_horizon: int,
+        target_col_idx: int = None,
+        mode: str = "single_step",
+    ):
+        """
+        data: np.ndarray 或 torch.Tensor，shape = [T, D]
+        input_window: p（过去多少步）
+        output_horizon: h（未来多少步）
+        target_col_idx: 目标变量在 data 的列索引（mode 需要的时候必须给）
+        mode: "single_step" / "multi_step_target" / "multi_step_full"
+        """
+        if isinstance(data, np.ndarray):
+            data = torch.from_numpy(data)
+
+        # data: [T, D]
+        self.data = data.float()
+        self.input_window = input_window
+        self.output_horizon = output_horizon
+        self.target_col_idx = target_col_idx
+
+        assert mode in ("single_step", "multi_step_target", "multi_step_full")
+        self.mode = mode
+
+        T = len(self.data)
+
+        if mode == "single_step":
+            # x_{i : i+p} -> a_{i+p}
+            # i 最大 = T - p - 1  => 样本数 = T - p
+            assert output_horizon == 1, "single_step 模式时 output_horizon 必须为 1"
+            self.length = T - input_window
+        else:
+            # x_{i : i+p} -> [i+p : i+p+h)
+            # i 最大 = T - p - h  => 样本数 = T - p - h + 1
+            self.length = T - input_window - output_horizon + 1
+
+        if self.length <= 0:
+            raise ValueError(
+                f"Dataset 长度为 {self.length}，请检查 T={T}, input_window={input_window}, output_horizon={output_horizon}"
+            )
+
+    def __len__(self):
+        return self.length
+
+    def __getitem__(self, idx):
+        # 输入窗口
+        x_start = idx
+        x_end = idx + self.input_window
+        X = self.data[x_start:x_end]  # [p, D]
+
+        if self.mode == "single_step":
+            # label = 单个标量 a_{t+1}
+            y_idx = x_end
+            y = self.data[y_idx, self.target_col_idx]      # 标量
+        elif self.mode == "multi_step_target":
+            # label = 未来 h 步的目标变量 [h]
+            y_start = x_end
+            y_end = x_end + self.output_horizon
+            y = self.data[y_start:y_end, self.target_col_idx]  # [h]
+        else:  # "multi_step_full"
+            # label = 未来 h 步的全特征 [h, D]
+            y_start = x_end
+            y_end = x_end + self.output_horizon
+            y = self.data[y_start:y_end]   # [h, D]
+
+        return X, y
+
+
+# ==============================================
+# 2. 通用 LSTM Forecaster：一个模型支持三种任务
+# ==============================================
+class LSTMForecaster(nn.Module):
+    """
+    通用 LSTM 预测模型（LSTM + Dense），支持三种任务：
+
+    1) single_step:
+        x_{t-p+1:t}   -> a_{t+1}
+        输入: [B, p, D]
+        输出: [B]
+
+    2) multi_step_target:
+        x_{t-p+1:t}   -> a_{t+1:t+h}
+        输入: [B, p, D]
+        输出: [B, h]
+
+    3) multi_step_full:
+        x_{t-p+1:t}   -> x_{t+1:t+h}
+        输入: [B, p, D]
+        输出: [B, h, D]
+    """
+
+    def __init__(
+        self,
+        input_size: int,
+        hidden_size: int,
+        horizon: int,
+        mode: str = "single_step",
+        num_layers: int = 1,
+        dropout: float = 0.0,
+    ):
+        super().__init__()
+        assert mode in ("single_step", "multi_step_target", "multi_step_full")
+        self.mode = mode
+        self.horizon = horizon
+        self.input_size = input_size   # D
+
+        # 共享的 LSTM 编码器
+        self.lstm = nn.LSTM(
+            input_size=input_size,
+            hidden_size=hidden_size,
+            num_layers=num_layers,
+            dropout=dropout if num_layers > 1 else 0.0,
+            batch_first=True,   # x: [B, T, D]
+        )
+
+        # 根据任务决定输出维度
+        if mode == "single_step":
+            out_dim = 1                         # 标量
+        elif mode == "multi_step_target":
+            out_dim = horizon                   # h 个标量
+        else:  # multi_step_full
+            out_dim = horizon * input_size      # h * D
+
+        self.fc = nn.Linear(hidden_size, out_dim)
+
+    def forward(self, x):
+        """
+        x: [B, p, D]
+        """
+        B = x.size(0)
+        output, (h_n, c_n) = self.lstm(x)
+        last_hidden = h_n[-1]            # [B, H]
+        out = self.fc(last_hidden)       # [B, out_dim]
+
+        if self.mode == "single_step":
+            # [B, 1] -> [B]
+            return out.squeeze(-1)
+
+        elif self.mode == "multi_step_target":
+            # [B, h]
+            return out  # 已经是 [B, horizon]
+
+        else:  # "multi_step_full"
+            # [B, h*D] -> [B, h, D]
+            return out.view(B, self.horizon, self.input_size)
+
+
+# ===============================
+# 3. Demo：用随机数据跑 3 种任务
+# ===============================
+def demo():
+    # 假设有 T 条时间数据，每条 D 个特征
+    T = 500          # 时间长度
+    D = 8            # 特征维度
+    p = 20           # 输入窗口长度
+    h1 = 1           # 一步预测
+    h30 = 30         # 未来 30 步
+    target_col_idx = 0  # 第 0 列作为目标变量
+
+    # 随机造一个数据矩阵 [T, D]，实际使用时换成你的真实数据
+    np.random.seed(0)
+    data_np = np.random.randn(T, D).astype(np.float32)
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    criterion = nn.MSELoss()
+
+    # -------------------------
+    # ① 一步预测（多变量 -> 单变量）
+    # -------------------------
+    dataset_1 = MultiStepDataset(
+        data=data_np,
+        input_window=p,
+        output_horizon=h1,
+        target_col_idx=target_col_idx,
+        mode="single_step"
+    )
+    loader_1 = DataLoader(dataset_1, batch_size=64, shuffle=True)
+
+    model_1 = LSTMForecaster(
+        input_size=D,
+        hidden_size=64,
+        horizon=h1,
+        mode="single_step"
+    ).to(device)
+    optimizer_1 = torch.optim.Adam(model_1.parameters(), lr=1e-3)
+
+    print("=== 训练 ① 一步预测（多变量 -> 单变量） ===")
+    for epoch in range(2):
+        model_1.train()
+        total_loss = 0.0
+        for X, y in loader_1:
+            X = X.to(device)             # [B, p, D]
+            y = y.to(device).float()     # [B]
+
+            optimizer_1.zero_grad()
+            y_pred = model_1(X)          # [B]
+            loss = criterion(y_pred, y)
+            loss.backward()
+            optimizer_1.step()
+            total_loss += loss.item() * X.size(0)
+
+        avg_loss = total_loss / len(dataset_1)
+        print(f"Epoch {epoch+1}, Loss: {avg_loss:.4f}")
+
+    # -------------------------
+    # ② 多步预测（多变量 -> 单变量）
+    # -------------------------
+    dataset_2 = MultiStepDataset(
+        data=data_np,
+        input_window=p,
+        output_horizon=h30,
+        target_col_idx=target_col_idx,
+        mode="multi_step_target"
+    )
+    loader_2 = DataLoader(dataset_2, batch_size=64, shuffle=True)
+
+    model_2 = LSTMForecaster(
+        input_size=D,
+        hidden_size=64,
+        horizon=h30,
+        mode="multi_step_target"
+    ).to(device)
+    optimizer_2 = torch.optim.Adam(model_2.parameters(), lr=1e-3)
+
+    print("\n=== 训练 ② 多步预测（多变量 -> 单变量） ===")
+    for epoch in range(2):
+        model_2.train()
+        total_loss = 0.0
+        for X, y in loader_2:
+            X = X.to(device)             # [B, p, D]
+            y = y.to(device).float()     # [B, h30]
+
+            optimizer_2.zero_grad()
+            y_pred = model_2(X)          # [B, h30]
+            loss = criterion(y_pred, y)
+            loss.backward()
+            optimizer_2.step()
+            total_loss += loss.item() * X.size(0)
+
+        avg_loss = total_loss / len(dataset_2)
+        print(f"Epoch {epoch+1}, Loss: {avg_loss:.4f}")
+
+    # -------------------------
+    # ③ 多步预测（多变量 -> 多变量）
+    # -------------------------
+    dataset_3 = MultiStepDataset(
+        data=data_np,
+        input_window=p,
+        output_horizon=h30,
+        target_col_idx=None,
+        mode="multi_step_full"
+    )
+    loader_3 = DataLoader(dataset_3, batch_size=64, shuffle=True)
+
+    model_3 = LSTMForecaster(
+        input_size=D,
+        hidden_size=64,
+        horizon=h30,
+        mode="multi_step_full"
+    ).to(device)
+    optimizer_3 = torch.optim.Adam(model_3.parameters(), lr=1e-3)
+
+    print("\n=== 训练 ③ 多步预测（多变量 -> 多变量） ===")
+    for epoch in range(2):
+        model_3.train()
+        total_loss = 0.0
+        for X, y in loader_3:
+            X = X.to(device)             # [B, p, D]
+            y = y.to(device).float()     # [B, h30, D]
+
+            optimizer_3.zero_grad()
+            y_pred = model_3(X)          # [B, h30, D]
+            loss = criterion(y_pred, y)
+            loss.backward()
+            optimizer_3.step()
+            total_loss += loss.item() * X.size(0)
+
+        avg_loss = total_loss / len(dataset_3)
+        print(f"Epoch {epoch+1}, Loss: {avg_loss:.4f}")
+
+    # 简单看一下一个 batch 的输出 shape
+    X_batch, y_batch = next(iter(loader_3))
+    with torch.no_grad():
+        pred_batch = model_3(X_batch.to(device))
+    print("\n③ 模型输出形状检查：")
+    print("X_batch:", X_batch.shape)       # [B, p, D]
+    print("y_batch:", y_batch.shape)       # [B, h30, D]
+    print("pred_batch:", pred_batch.shape) # [B, h30, D]
+
+
+if __name__ == "__main__":
+    demo()
