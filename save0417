@@ -1,0 +1,190 @@
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+
+from tslearn.clustering import KShape
+from tslearn.preprocessing import TimeSeriesScalerMeanVariance
+
+
+def run_kshape_on_true_group(
+    df: pd.DataFrame,
+    target_col: str = "target",
+    id_col: str | None = "stock_id",
+    n_clusters: int = 4,
+    random_state: int = 42,
+):
+    """
+    只对 target=True 的样本做 K-Shape 聚类
+
+    参数
+    ----
+    df : pd.DataFrame
+        包含 target 列，以及按时间顺序展开的价格列
+    target_col : str
+        标签列名
+    id_col : str | None
+        股票ID列；如果没有可设为 None
+    n_clusters : int
+        聚类簇数
+    random_state : int
+        随机种子
+
+    返回
+    ----
+    result_df : pd.DataFrame
+        True 样本及其 cluster 标签
+    ks : KShape
+        训练好的 KShape 模型
+    X_scaled : np.ndarray
+        标准化后的时间序列, shape = (n_samples, time_steps, 1)
+    """
+
+    # 1) 只保留 target=True
+    df_true = df[df[target_col] == True].copy()
+    if df_true.empty:
+        raise ValueError("没有 target=True 的样本")
+
+    # 2) 取时间序列列
+    exclude_cols = [target_col]
+    if id_col is not None and id_col in df_true.columns:
+        exclude_cols.append(id_col)
+
+    ts_cols = [c for c in df_true.columns if c not in exclude_cols]
+
+    # 3) 转成 numpy
+    X = df_true[ts_cols].to_numpy(dtype=float)
+
+    # 可选：先转成收益率，而不是直接价格
+    # X = np.diff(np.log(X), axis=1)
+
+    # 4) tslearn 需要 shape = (n_samples, time_steps, n_features)
+    X = X[:, :, np.newaxis]
+
+    # 5) 标准化：K-Shape 看“形状”，所以先做均值方差标准化
+    X_scaled = TimeSeriesScalerMeanVariance().fit_transform(X)
+
+    # 6) 训练 K-Shape
+    ks = KShape(
+        n_clusters=n_clusters,
+        n_init=5,
+        max_iter=100,
+        random_state=random_state,
+        verbose=False,
+    )
+    labels = ks.fit_predict(X_scaled)
+
+    # 7) 输出结果
+    result_df = df_true[[id_col]].copy() if id_col is not None and id_col in df_true.columns else df_true.index.to_frame(index=False)
+    if not isinstance(result_df, pd.DataFrame):
+        result_df = pd.DataFrame({"index": df_true.index})
+
+    result_df["cluster"] = labels
+
+    return result_df, ks, X_scaled
+
+
+def plot_kshape_clusters(ks: KShape, X_scaled: np.ndarray, labels: np.ndarray | None = None, max_series_per_cluster: int = 30):
+    """
+    画每个簇中的样本曲线和簇中心
+    """
+    if labels is None:
+        labels = ks.labels_
+
+    n_clusters = ks.n_clusters
+    time_steps = X_scaled.shape[1]
+
+    fig, axes = plt.subplots(n_clusters, 1, figsize=(12, 3 * n_clusters), sharex=True)
+    if n_clusters == 1:
+        axes = [axes]
+
+    for k, ax in enumerate(axes):
+        idx = np.where(labels == k)[0]
+
+        # 最多画一些样本，避免太密
+        idx_plot = idx[:max_series_per_cluster]
+
+        for i in idx_plot:
+            ax.plot(X_scaled[i].ravel(), alpha=0.2)
+
+        # 簇中心
+        centroid = ks.cluster_centers_[k].ravel()
+        ax.plot(centroid, linewidth=3, label=f"Cluster {k} centroid")
+
+        ax.set_title(f"Cluster {k} | size={len(idx)}")
+        ax.legend(loc="upper left")
+        ax.grid(alpha=0.3)
+
+    axes[-1].set_xlabel("Time step")
+    plt.tight_layout()
+    plt.show()
+
+
+def attach_cluster_to_original_df(
+    df: pd.DataFrame,
+    clustered_true_df: pd.DataFrame,
+    id_col: str = "stock_id"
+) -> pd.DataFrame:
+    """
+    把 cluster 标签合并回原始表
+    """
+    out = df.copy()
+    out["cluster"] = np.nan
+    out.loc[out[id_col].isin(clustered_true_df[id_col]), "cluster"] = (
+        out.loc[out[id_col].isin(clustered_true_df[id_col]), id_col]
+        .map(clustered_true_df.set_index(id_col)["cluster"])
+    )
+    return out
+
+
+# ======================
+# 用法示例
+# ======================
+if __name__ == "__main__":
+    # 示例：读取你的数据
+    # df = pd.read_csv("stocks.csv")
+
+    # 这里构造一个假的例子
+    rng = np.random.default_rng(42)
+    n_stocks = 200
+    time_steps = 60
+
+    base = rng.normal(size=(n_stocks, time_steps)).cumsum(axis=1)
+    target = rng.random(n_stocks) > 0.5
+
+    # 给 target=True 注入几种“形状”
+    for i in range(n_stocks):
+        if target[i]:
+            pattern_type = i % 3
+            if pattern_type == 0:
+                base[i] += np.linspace(0, 8, time_steps)          # 缓慢上升
+            elif pattern_type == 1:
+                half = time_steps // 2
+                base[i, :half] -= np.linspace(0, 5, half)         # V型反转前半段
+                base[i, half:] += np.linspace(0, 8, time_steps-half)
+            else:
+                base[i] += np.sin(np.linspace(0, 3*np.pi, time_steps)) * 2 + np.linspace(0, 4, time_steps)
+
+    columns = [f"t{i}" for i in range(time_steps)]
+    df = pd.DataFrame(base, columns=columns)
+    df["stock_id"] = [f"S{i:04d}" for i in range(n_stocks)]
+    df["target"] = target
+
+    # 运行 K-Shape
+    clustered_true_df, ks, X_scaled = run_kshape_on_true_group(
+        df=df,
+        target_col="target",
+        id_col="stock_id",
+        n_clusters=3,
+        random_state=42,
+    )
+
+    print(clustered_true_df.head())
+    print("\nCluster counts:")
+    print(clustered_true_df["cluster"].value_counts().sort_index())
+
+    # 画图
+    plot_kshape_clusters(ks, X_scaled)
+
+    # 合并回原始表
+    df_with_cluster = attach_cluster_to_original_df(df, clustered_true_df, id_col="stock_id")
+    print(df_with_cluster.head())
